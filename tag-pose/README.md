@@ -11,7 +11,8 @@ python3 DetectionNetwork/detection_network.py
 # Display all camera streams
 python3 Camera/camera_all.py
 
-# Run detector
-python3 aruco-test/aruco_pose.py --marker-size 0.16 --dictionary DICT_6X6_250
+# Run detectors
+python3 tag-pose/aruco_pose.py --marker-size 0.16 --dictionary DICT_6X6_250
+python3 tag-pose/apriltag_pose.py --tag-size 0.16
 apriltag online gen: https://chaitanyantr.github.io/apriltag.html
 aruco online gen: https://chev.me/arucogen/
