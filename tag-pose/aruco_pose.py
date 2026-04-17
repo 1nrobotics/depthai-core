@@ -27,6 +27,11 @@ def build_argparser():
         default=DEFAULT_DICT,
         help=f"OpenCV ArUco dictionary name. Default: {DEFAULT_DICT}",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print per-detection pose information",
+    )
     return parser
 
 
@@ -111,6 +116,11 @@ with dai.Pipeline() as pipeline:
     selected_config = select_highest_resolution_config(camera_features, TARGET_FPS)
     output_size = (selected_config.width, selected_config.height)
     output_fps = min(TARGET_FPS, selected_config.maxFps)
+    camera_matrix = np.array(
+        calibration.getCameraIntrinsics(CAMERA_SOCKET, output_size[0], output_size[1]),
+        dtype=np.float32,
+    )
+    distortion_coeffs = np.array(calibration.getDistortionCoefficients(CAMERA_SOCKET), dtype=np.float32)
 
     print(
         f"Using {CAMERA_SOCKET} sensor={camera_features.sensorName} "
@@ -139,13 +149,6 @@ with dai.Pipeline() as pipeline:
             counter = 0
             start_time = current_time
 
-        camera_socket = dai.CameraBoardSocket(in_frame.getInstanceNum())
-        camera_matrix = np.array(
-            calibration.getCameraIntrinsics(camera_socket, in_frame.getWidth(), in_frame.getHeight()),
-            dtype=np.float32,
-        )
-        distortion_coeffs = np.array(calibration.getDistortionCoefficients(camera_socket), dtype=np.float32)
-
         corners_list, ids, _ = aruco_detector.detectMarkers(frame)
 
         if ids is not None:
@@ -169,7 +172,8 @@ with dai.Pipeline() as pipeline:
                 if success:
                     draw_pose_axes(display, camera_matrix, distortion_coeffs, rvec, tvec, args.marker_size)
                     distance_m = float(np.linalg.norm(tvec))
-                    print(f"id={int(marker_id)} tvec={tvec.ravel()} rvec={rvec.ravel()} distance_m={distance_m:.3f}")
+                    if args.verbose:
+                        print(f"id={int(marker_id)} tvec={tvec.ravel()} rvec={rvec.ravel()} distance_m={distance_m:.3f}")
                     pose_text = f"ID:{int(marker_id)} Z:{tvec[2][0]:.2f}m D:{distance_m:.2f}m"
                 else:
                     pose_text = f"ID:{int(marker_id)}"

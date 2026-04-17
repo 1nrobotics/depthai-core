@@ -20,6 +20,11 @@ def build_argparser():
         default=0.16,
         help="Physical AprilTag edge length in meters. Default: 0.16",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print per-detection pose information",
+    )
     return parser
 
 
@@ -125,7 +130,7 @@ with dai.Pipeline() as pipeline:
     pipeline.start()
     while pipeline.isRunning():
         aprilTagMessage = outQueue.get()
-        assert(isinstance(aprilTagMessage, dai.AprilTags))
+        assert isinstance(aprilTagMessage, dai.AprilTags)
         aprilTags = aprilTagMessage.aprilTags
 
         counter += 1
@@ -139,12 +144,11 @@ with dai.Pipeline() as pipeline:
         frame = passthroughImage.getCvFrame()
 
         if camera_matrix is None or distortion_coeffs is None:
-            camera_socket = dai.CameraBoardSocket(passthroughImage.getInstanceNum())
             camera_matrix = np.array(
-                calibration.getCameraIntrinsics(camera_socket, passthroughImage.getWidth(), passthroughImage.getHeight()),
+                calibration.getCameraIntrinsics(CAMERA_SOCKET, passthroughImage.getWidth(), passthroughImage.getHeight()),
                 dtype=np.float32,
             )
-            distortion_coeffs = np.array(calibration.getDistortionCoefficients(camera_socket), dtype=np.float32)
+            distortion_coeffs = np.array(calibration.getDistortionCoefficients(CAMERA_SOCKET), dtype=np.float32)
 
         for tag in aprilTags:
             topLeft = to_int(tag.topLeft)
@@ -163,7 +167,8 @@ with dai.Pipeline() as pipeline:
             if success:
                 draw_pose_axes(frame, camera_matrix, distortion_coeffs, rvec, tvec, args.tag_size)
                 distance_m = float(np.linalg.norm(tvec))
-                print(f"id={tag.id} tvec={tvec.ravel()} rvec={rvec.ravel()} distance_m={distance_m:.3f}")
+                if args.verbose:
+                    print(f"id={tag.id} tvec={tvec.ravel()} rvec={rvec.ravel()} distance_m={distance_m:.3f}")
                 pose_text = f"ID:{tag.id} Z:{tvec[2][0]:.2f}m D:{distance_m:.2f}m"
             else:
                 pose_text = f"ID:{tag.id}"
