@@ -8,8 +8,13 @@ import depthai as dai
 import numpy as np
 
 
-CAMERA_SOCKET = dai.CameraBoardSocket.CAM_B
 TARGET_FPS = 30.0
+DEFAULT_CAMERA = "CAM_B"
+CAMERA_SOCKETS = {
+    "CAM_A": dai.CameraBoardSocket.CAM_A,
+    "CAM_B": dai.CameraBoardSocket.CAM_B,
+    "CAM_C": dai.CameraBoardSocket.CAM_C,
+}
 DEFAULT_FAMILY = "TAG_36H11"
 APRILTAG_FAMILIES = {
     "TAG_36H11": dai.AprilTagConfig.Family.TAG_36H11,
@@ -23,6 +28,13 @@ APRILTAG_FAMILIES = {
 
 def build_argparser():
     parser = argparse.ArgumentParser(description="Detect AprilTags with DepthAI v3 and estimate pose on the host.")
+    parser.add_argument(
+        "--camera",
+        type=str,
+        default=DEFAULT_CAMERA,
+        choices=sorted(CAMERA_SOCKETS.keys()),
+        help=f"Camera socket to use. Default: {DEFAULT_CAMERA}",
+    )
     parser.add_argument(
         "--tag-size",
         type=float,
@@ -132,21 +144,22 @@ def draw_reprojection(frame, image_points, projected_points):
 
 
 args = build_argparser().parse_args()
+camera_socket = CAMERA_SOCKETS[args.camera]
 
 with dai.Pipeline() as pipeline:
     device = pipeline.getDefaultDevice()
     calibration = device.readCalibration()
-    camera_features = get_camera_features(device, CAMERA_SOCKET)
+    camera_features = get_camera_features(device, camera_socket)
     selected_config = select_highest_resolution_config(camera_features, TARGET_FPS)
     output_size = (selected_config.width, selected_config.height)
     output_fps = min(TARGET_FPS, selected_config.maxFps)
 
     print(
-        f"Using {CAMERA_SOCKET} sensor={camera_features.sensorName} "
+        f"Using {args.camera} sensor={camera_features.sensorName} "
         f"resolution={output_size[0]}x{output_size[1]} fps={output_fps:g}"
     )
 
-    hostCamera = pipeline.create(dai.node.Camera).build(CAMERA_SOCKET, output_size, output_fps)
+    hostCamera = pipeline.create(dai.node.Camera).build(camera_socket, output_size, output_fps)
     aprilTagNode = pipeline.create(dai.node.AprilTag)
     aprilTagNode.initialConfig.setFamily(APRILTAG_FAMILIES[args.family])
     aprilTagNode.setRunOnHost(args.detector_runtime == "host")

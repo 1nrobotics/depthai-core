@@ -8,13 +8,25 @@ import depthai as dai
 import numpy as np
 
 
-CAMERA_SOCKET = dai.CameraBoardSocket.CAM_B
 TARGET_FPS = 30.0
+DEFAULT_CAMERA = "CAM_B"
+CAMERA_SOCKETS = {
+    "CAM_A": dai.CameraBoardSocket.CAM_A,
+    "CAM_B": dai.CameraBoardSocket.CAM_B,
+    "CAM_C": dai.CameraBoardSocket.CAM_C,
+}
 DEFAULT_DICT = "DICT_4X4_50"
 
 
 def build_argparser():
     parser = argparse.ArgumentParser(description="Detect ArUco markers with DepthAI v3 and estimate pose on the host.")
+    parser.add_argument(
+        "--camera",
+        type=str,
+        default=DEFAULT_CAMERA,
+        choices=sorted(CAMERA_SOCKETS.keys()),
+        help=f"Camera socket to use. Default: {DEFAULT_CAMERA}",
+    )
     parser.add_argument(
         "--marker-size",
         type=float,
@@ -112,6 +124,7 @@ def get_supported_dictionaries():
 
 
 args = build_argparser().parse_args()
+camera_socket = CAMERA_SOCKETS[args.camera]
 print(f"OpenCV version: {cv2.__version__}")
 supported_dictionaries = get_supported_dictionaries()
 print(f"Supported dictionaries ({len(supported_dictionaries)}): {', '.join(supported_dictionaries)}")
@@ -121,17 +134,17 @@ aruco_detector = create_detector(aruco_dictionary)
 with dai.Pipeline() as pipeline:
     device = pipeline.getDefaultDevice()
     calibration = device.readCalibration()
-    camera_features = get_camera_features(device, CAMERA_SOCKET)
+    camera_features = get_camera_features(device, camera_socket)
     selected_config = select_highest_resolution_config(camera_features, TARGET_FPS)
     output_size = (selected_config.width, selected_config.height)
     output_fps = min(TARGET_FPS, selected_config.maxFps)
 
     print(
-        f"Using {CAMERA_SOCKET} sensor={camera_features.sensorName} "
+        f"Using {args.camera} sensor={camera_features.sensorName} "
         f"resolution={output_size[0]}x{output_size[1]} fps={output_fps:g}"
     )
 
-    host_camera = pipeline.create(dai.node.Camera).build(CAMERA_SOCKET, output_size, output_fps)
+    host_camera = pipeline.create(dai.node.Camera).build(camera_socket, output_size, output_fps)
     output_queue = host_camera.requestOutput(output_size, dai.ImgFrame.Type.GRAY8, fps=output_fps).createOutputQueue()
 
     color = (0, 255, 0)

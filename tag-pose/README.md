@@ -88,19 +88,19 @@ The blue line is drawn along `-Z` on purpose so the axis appears to come out tow
 
 ## Camera Selection
 
-Both scripts currently use:
+Both scripts accept a `--camera` flag:
 
-```python
-CAMERA_SOCKET = dai.CameraBoardSocket.CAM_B
+```bash
+--camera CAM_A
 ```
 
-That means the demo runs on the camera connected to `CAM_B` in the device calibration. On `OAK-D` and `OAK-D-W`, the exact physical lens mapped to `CAM_B` can vary by hardware generation and calibration layout, so the safest rule is:
+The default is `CAM_B`. On `OAK-D` and `OAK-D-W`, the exact physical lens mapped to each socket can vary by hardware generation and calibration layout, so the safest rule is:
 
 - plug in the device
 - start the script
-- read the startup line such as `Using CAM_B sensor=... resolution=...`
+- read the startup line such as `Using CAM_A sensor=... resolution=...`
 
-If you want to force another camera, edit `CAMERA_SOCKET` in the script.
+If you want the middle camera on a typical `OAK-D`, try `--camera CAM_A` first and confirm using the startup line.
 
 ## Before You Run
 
@@ -163,13 +163,20 @@ AprilTag:
 python3 tag-pose/apriltag_pose.py --tag-size 0.02 --family TAG_36H11 --detector-runtime device
 ```
 
-ArUco:
-
 ```bash
-python3 tag-pose/aruco_pose.py --marker-size 0.02 --dictionary DICT_4X4_50
+# typical OAK-D center camera
+python3 tag-pose/apriltag_pose.py --camera CAM_A --tag-size 0.02 --family TAG_36H11 --detector-runtime device
 ```
 
-4. Hold the printed tag in front of the camera used by `CAM_B`.
+ArUco:
+```bash
+python3 tag-pose/aruco_pose.py --camera CAM_A --marker-size 0.02 --dictionary DICT_4X4_50
+```
+```bash
+python3 tag-pose/aruco_pose.py --camera CAM_A --marker-size 0.02 --dictionary DICT_APRILTAG_36h11
+```
+
+4. Hold the printed tag in front of the selected camera socket.
 5. If you are using a `2 cm` tag, start close to the camera, around `10 cm` to `40 cm`.
 6. Move the tag slowly while keeping it mostly flat and fully visible.
 7. Press `q` to quit.
@@ -210,7 +217,7 @@ Commands are the same:
 ```bash
 # use a printed 36h11 AprilTag here
 python3 tag-pose/apriltag_pose.py --tag-size 0.02 --family TAG_36H11 --detector-runtime device
-python3 tag-pose/aruco_pose.py --marker-size 0.02 --dictionary DICT_4X4_50
+python3 tag-pose/aruco_pose.py --camera CAM_A --marker-size 0.02 --dictionary DICT_4X4_50
 ```
 
 If you want AprilTag detection to run on the host instead, use:
@@ -286,7 +293,7 @@ Pose looks unstable
 
 Wrong camera is being used
 
-- change `CAMERA_SOCKET` in the script
+- rerun with `--camera CAM_A`, `--camera CAM_B`, or `--camera CAM_C`
 - rerun and confirm the startup line printed by the script
 
 ## Code Notes
