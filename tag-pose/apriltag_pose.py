@@ -10,6 +10,15 @@ import numpy as np
 
 CAMERA_SOCKET = dai.CameraBoardSocket.CAM_B
 TARGET_FPS = 30.0
+DEFAULT_FAMILY = "TAG_36H11"
+APRILTAG_FAMILIES = {
+    "TAG_36H11": dai.AprilTagConfig.Family.TAG_36H11,
+    "TAG_36H10": dai.AprilTagConfig.Family.TAG_36H10,
+    "TAG_25H9": dai.AprilTagConfig.Family.TAG_25H9,
+    "TAG_16H5": dai.AprilTagConfig.Family.TAG_16H5,
+    "TAG_CIR21H7": dai.AprilTagConfig.Family.TAG_CIR21H7,
+    "TAG_STAND41H12": dai.AprilTagConfig.Family.TAG_STAND41H12,
+}
 
 
 def build_argparser():
@@ -19,6 +28,20 @@ def build_argparser():
         type=float,
         default=0.16,
         help="Physical AprilTag edge length in meters. Default: 0.16",
+    )
+    parser.add_argument(
+        "--family",
+        type=str,
+        default=DEFAULT_FAMILY,
+        choices=sorted(APRILTAG_FAMILIES.keys()),
+        help=f"AprilTag family used by the detector. Default: {DEFAULT_FAMILY}",
+    )
+    parser.add_argument(
+        "--detector-runtime",
+        type=str,
+        default="device",
+        choices=("device", "host"),
+        help="Where to run AprilTag detection. Pose estimation still runs on the host. Default: device",
     )
     return parser
 
@@ -111,6 +134,8 @@ with dai.Pipeline() as pipeline:
 
     hostCamera = pipeline.create(dai.node.Camera).build(CAMERA_SOCKET, output_size, output_fps)
     aprilTagNode = pipeline.create(dai.node.AprilTag)
+    aprilTagNode.initialConfig.setFamily(APRILTAG_FAMILIES[args.family])
+    aprilTagNode.setRunOnHost(args.detector_runtime == "host")
     hostCamera.requestOutput(output_size, dai.ImgFrame.Type.GRAY8, fps=output_fps).link(aprilTagNode.inputImage)
     passthroughOutputQueue = aprilTagNode.passthroughInputImage.createOutputQueue()
     outQueue = aprilTagNode.out.createOutputQueue()
@@ -123,6 +148,8 @@ with dai.Pipeline() as pipeline:
     distortion_coeffs = None
 
     pipeline.start()
+    print(f"AprilTag family: {args.family}")
+    print(f"AprilTag detector runtime: {args.detector_runtime}")
     while pipeline.isRunning():
         aprilTagMessage = outQueue.get()
         assert(isinstance(aprilTagMessage, dai.AprilTags))
