@@ -77,6 +77,20 @@ def draw_pose_axes(frame, camera_matrix, distortion_coeffs, rvec, tvec, marker_s
     cv2.line(frame, tuple(origin), tuple(z_axis), (255, 0, 0), 2, cv2.LINE_AA)
 
 
+def compute_reprojection(object_points, image_points, camera_matrix, distortion_coeffs, rvec, tvec):
+    projected_points, _ = cv2.projectPoints(object_points, rvec, tvec, camera_matrix, distortion_coeffs)
+    projected_points = projected_points.reshape(-1, 2)
+    per_corner_error = np.linalg.norm(image_points - projected_points, axis=1)
+    rmse_px = float(np.sqrt(np.mean(per_corner_error ** 2)))
+    return projected_points, rmse_px
+
+
+def draw_reprojection(frame, image_points, projected_points):
+    for observed, projected in zip(image_points.astype(int), projected_points.astype(int)):
+        cv2.circle(frame, tuple(projected), 4, (255, 0, 255), -1, cv2.LINE_AA)
+        cv2.line(frame, tuple(observed), tuple(projected), (0, 255, 255), 1, cv2.LINE_AA)
+
+
 def get_aruco_dictionary(dictionary_name: str):
     if not hasattr(cv2, "aruco"):
         raise RuntimeError("This OpenCV build does not include cv2.aruco. Install opencv-contrib-python in your environment.")
@@ -167,10 +181,17 @@ with dai.Pipeline() as pipeline:
 
                 center = tuple(np.mean(image_points, axis=0).astype(int))
                 if success:
+                    projected_points, reprojection_rmse_px = compute_reprojection(
+                        object_points, image_points, camera_matrix, distortion_coeffs, rvec, tvec
+                    )
                     draw_pose_axes(display, camera_matrix, distortion_coeffs, rvec, tvec, args.marker_size)
+                    draw_reprojection(display, image_points, projected_points)
                     distance_m = float(np.linalg.norm(tvec))
-                    print(f"id={int(marker_id)} tvec={tvec.ravel()} rvec={rvec.ravel()} distance_m={distance_m:.3f}")
-                    pose_text = f"ID:{int(marker_id)} Z:{tvec[2][0]:.2f}m D:{distance_m:.2f}m"
+                    print(
+                        f"id={int(marker_id)} tvec={tvec.ravel()} rvec={rvec.ravel()} "
+                        f"distance_m={distance_m:.3f} reprojection_rmse_px={reprojection_rmse_px:.2f}"
+                    )
+                    pose_text = f"ID:{int(marker_id)} Z:{tvec[2][0]:.2f}m D:{distance_m:.2f}m E:{reprojection_rmse_px:.2f}px"
                 else:
                     pose_text = f"ID:{int(marker_id)}"
 

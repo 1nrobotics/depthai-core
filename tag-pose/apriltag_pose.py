@@ -99,6 +99,14 @@ def estimate_pose(tag, camera_matrix, distortion_coeffs, tag_size_m: float):
     return success, rvec, tvec
 
 
+def compute_reprojection(object_points, image_points, camera_matrix, distortion_coeffs, rvec, tvec):
+    projected_points, _ = cv2.projectPoints(object_points, rvec, tvec, camera_matrix, distortion_coeffs)
+    projected_points = projected_points.reshape(-1, 2)
+    per_corner_error = np.linalg.norm(image_points - projected_points, axis=1)
+    rmse_px = float(np.sqrt(np.mean(per_corner_error ** 2)))
+    return projected_points, rmse_px
+
+
 def draw_pose_axes(frame, camera_matrix, distortion_coeffs, rvec, tvec, tag_size_m: float):
     axis_length = tag_size_m * 0.5
     axis_points = np.array(
@@ -115,6 +123,12 @@ def draw_pose_axes(frame, camera_matrix, distortion_coeffs, rvec, tvec, tag_size
     cv2.line(frame, tuple(origin), tuple(x_axis), (0, 0, 255), 2, cv2.LINE_AA)
     cv2.line(frame, tuple(origin), tuple(y_axis), (0, 255, 0), 2, cv2.LINE_AA)
     cv2.line(frame, tuple(origin), tuple(z_axis), (255, 0, 0), 2, cv2.LINE_AA)
+
+
+def draw_reprojection(frame, image_points, projected_points):
+    for observed, projected in zip(image_points.astype(int), projected_points.astype(int)):
+        cv2.circle(frame, tuple(projected), 4, (255, 0, 255), -1, cv2.LINE_AA)
+        cv2.line(frame, tuple(observed), tuple(projected), (0, 255, 255), 1, cv2.LINE_AA)
 
 
 args = build_argparser().parse_args()
@@ -178,6 +192,7 @@ with dai.Pipeline() as pipeline:
             topRight = to_int(tag.topRight)
             bottomRight = to_int(tag.bottomRight)
             bottomLeft = to_int(tag.bottomLeft)
+            image_points = np.array([topLeft, topRight, bottomRight, bottomLeft], dtype=np.float32)
 
             center = (int((topLeft[0] + bottomRight[0]) / 2), int((topLeft[1] + bottomRight[1]) / 2))
 
@@ -188,10 +203,18 @@ with dai.Pipeline() as pipeline:
 
             success, rvec, tvec = estimate_pose(tag, camera_matrix, distortion_coeffs, args.tag_size)
             if success:
+                object_points = create_object_points(args.tag_size)
+                projected_points, reprojection_rmse_px = compute_reprojection(
+                    object_points, image_points, camera_matrix, distortion_coeffs, rvec, tvec
+                )
                 draw_pose_axes(frame, camera_matrix, distortion_coeffs, rvec, tvec, args.tag_size)
+                draw_reprojection(frame, image_points, projected_points)
                 distance_m = float(np.linalg.norm(tvec))
-                print(f"id={tag.id} tvec={tvec.ravel()} rvec={rvec.ravel()} distance_m={distance_m:.3f}")
-                pose_text = f"ID:{tag.id} Z:{tvec[2][0]:.2f}m D:{distance_m:.2f}m"
+                print(
+                    f"id={tag.id} tvec={tvec.ravel()} rvec={rvec.ravel()} "
+                    f"distance_m={distance_m:.3f} reprojection_rmse_px={reprojection_rmse_px:.2f}"
+                )
+                pose_text = f"ID:{tag.id} Z:{tvec[2][0]:.2f}m D:{distance_m:.2f}m E:{reprojection_rmse_px:.2f}px"
             else:
                 pose_text = f"ID:{tag.id}"
 

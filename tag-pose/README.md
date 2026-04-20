@@ -178,12 +178,16 @@ What you should see:
 
 - a green outline around the detected marker
 - colored pose axes at the marker center
-- `ID`, `Z`, and `D` drawn on the image
+- magenta dots showing the reprojected marker corners from the estimated pose
+- yellow lines from each detected corner to its reprojected corner
+- `ID`, `Z`, `D`, and `E` drawn on the image
 - console output like:
 
 ```text
-id=0 tvec=[...] rvec=[...] distance_m=0.734
+id=0 tvec=[...] rvec=[...] distance_m=0.734 reprojection_rmse_px=0.82
 ```
+
+Here `E` is the reprojection RMSE in pixels. Lower is better.
 
 ## Running On OAK-D-W
 
@@ -240,6 +244,20 @@ python3 tag-pose/aruco_pose.py --marker-size 0.02 --dictionary DICT_6X6_250
 - Avoid extreme tilt while validating first results
 - Keep the tag away from strong glare
 - Prefer the center of the image for the cleanest first test
+
+## Verifying During Testing
+
+Use the reprojection overlay as a quick confidence check:
+
+- if the magenta reprojected corners sit almost on top of the detected corners, the pose is internally consistent
+- short yellow lines mean low reprojection error
+- long yellow lines mean the estimated pose is not matching the observed corners well
+
+Practical guidance:
+
+- under good conditions, errors around `1 px` or a few pixels are usually a good sign
+- if `E` grows noticeably while the tag is still and clearly visible, check blur, lighting, tag size, and whether the tag is too close to the image edge
+- compare `E` while changing distance and tilt; it should usually get worse as the tag gets smaller, blurrier, or more oblique
 
 ## Troubleshooting
 
