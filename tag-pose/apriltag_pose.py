@@ -8,17 +8,52 @@ import depthai as dai
 import numpy as np
 
 
-CAMERA_SOCKET = dai.CameraBoardSocket.CAM_B
 TARGET_FPS = 30.0
+DEFAULT_CAMERA = "CAM_B"
+CAMERA_SOCKETS = {
+    "CAM_A": dai.CameraBoardSocket.CAM_A,
+    "CAM_B": dai.CameraBoardSocket.CAM_B,
+    "CAM_C": dai.CameraBoardSocket.CAM_C,
+}
+DEFAULT_FAMILY = "TAG_36H11"
+APRILTAG_FAMILIES = {
+    "TAG_36H11": dai.AprilTagConfig.Family.TAG_36H11,
+    "TAG_36H10": dai.AprilTagConfig.Family.TAG_36H10,
+    "TAG_25H9": dai.AprilTagConfig.Family.TAG_25H9,
+    "TAG_16H5": dai.AprilTagConfig.Family.TAG_16H5,
+    "TAG_CIR21H7": dai.AprilTagConfig.Family.TAG_CIR21H7,
+    "TAG_STAND41H12": dai.AprilTagConfig.Family.TAG_STAND41H12,
+}
 
 
 def build_argparser():
     parser = argparse.ArgumentParser(description="Detect AprilTags with DepthAI v3 and estimate pose on the host.")
     parser.add_argument(
+        "--camera",
+        type=str,
+        default=DEFAULT_CAMERA,
+        choices=sorted(CAMERA_SOCKETS.keys()),
+        help=f"Camera socket to use. Default: {DEFAULT_CAMERA}",
+    )
+    parser.add_argument(
         "--tag-size",
         type=float,
         default=0.16,
         help="Physical AprilTag edge length in meters. Default: 0.16",
+    )
+    parser.add_argument(
+        "--family",
+        type=str,
+        default=DEFAULT_FAMILY,
+        choices=sorted(APRILTAG_FAMILIES.keys()),
+        help=f"AprilTag family used by the detector. Default: {DEFAULT_FAMILY}",
+    )
+    parser.add_argument(
+        "--detector-runtime",
+        type=str,
+        default="device",
+        choices=("device", "host"),
+        help="Where to run AprilTag detection. Pose estimation still runs on the host. Default: device",
     )
     return parser
 
@@ -76,6 +111,14 @@ def estimate_pose(tag, camera_matrix, distortion_coeffs, tag_size_m: float):
     return success, rvec, tvec
 
 
+def compute_reprojection(object_points, image_points, camera_matrix, distortion_coeffs, rvec, tvec):
+    projected_points, _ = cv2.projectPoints(object_points, rvec, tvec, camera_matrix, distortion_coeffs)
+    projected_points = projected_points.reshape(-1, 2)
+    per_corner_error = np.linalg.norm(image_points - projected_points, axis=1)
+    rmse_px = float(np.sqrt(np.mean(per_corner_error ** 2)))
+    return projected_points, rmse_px
+
+
 def draw_pose_axes(frame, camera_matrix, distortion_coeffs, rvec, tvec, tag_size_m: float):
     axis_length = tag_size_m * 0.5
     axis_points = np.array(
@@ -94,23 +137,32 @@ def draw_pose_axes(frame, camera_matrix, distortion_coeffs, rvec, tvec, tag_size
     cv2.line(frame, tuple(origin), tuple(z_axis), (255, 0, 0), 2, cv2.LINE_AA)
 
 
+def draw_reprojection(frame, image_points, projected_points):
+    for observed, projected in zip(image_points.astype(int), projected_points.astype(int)):
+        cv2.circle(frame, tuple(projected), 4, (255, 0, 255), -1, cv2.LINE_AA)
+        cv2.line(frame, tuple(observed), tuple(projected), (0, 255, 255), 1, cv2.LINE_AA)
+
+
 args = build_argparser().parse_args()
+camera_socket = CAMERA_SOCKETS[args.camera]
 
 with dai.Pipeline() as pipeline:
     device = pipeline.getDefaultDevice()
     calibration = device.readCalibration()
-    camera_features = get_camera_features(device, CAMERA_SOCKET)
+    camera_features = get_camera_features(device, camera_socket)
     selected_config = select_highest_resolution_config(camera_features, TARGET_FPS)
     output_size = (selected_config.width, selected_config.height)
     output_fps = min(TARGET_FPS, selected_config.maxFps)
 
     print(
-        f"Using {CAMERA_SOCKET} sensor={camera_features.sensorName} "
+        f"Using {args.camera} sensor={camera_features.sensorName} "
         f"resolution={output_size[0]}x{output_size[1]} fps={output_fps:g}"
     )
 
-    hostCamera = pipeline.create(dai.node.Camera).build(CAMERA_SOCKET, output_size, output_fps)
+    hostCamera = pipeline.create(dai.node.Camera).build(camera_socket, output_size, output_fps)
     aprilTagNode = pipeline.create(dai.node.AprilTag)
+    aprilTagNode.initialConfig.setFamily(APRILTAG_FAMILIES[args.family])
+    aprilTagNode.setRunOnHost(args.detector_runtime == "host")
     hostCamera.requestOutput(output_size, dai.ImgFrame.Type.GRAY8, fps=output_fps).link(aprilTagNode.inputImage)
     passthroughOutputQueue = aprilTagNode.passthroughInputImage.createOutputQueue()
     outQueue = aprilTagNode.out.createOutputQueue()
@@ -123,6 +175,8 @@ with dai.Pipeline() as pipeline:
     distortion_coeffs = None
 
     pipeline.start()
+    print(f"AprilTag family: {args.family}")
+    print(f"AprilTag detector runtime: {args.detector_runtime}")
     while pipeline.isRunning():
         aprilTagMessage = outQueue.get()
         assert(isinstance(aprilTagMessage, dai.AprilTags))
@@ -151,6 +205,7 @@ with dai.Pipeline() as pipeline:
             topRight = to_int(tag.topRight)
             bottomRight = to_int(tag.bottomRight)
             bottomLeft = to_int(tag.bottomLeft)
+            image_points = np.array([topLeft, topRight, bottomRight, bottomLeft], dtype=np.float32)
 
             center = (int((topLeft[0] + bottomRight[0]) / 2), int((topLeft[1] + bottomRight[1]) / 2))
 
@@ -161,10 +216,18 @@ with dai.Pipeline() as pipeline:
 
             success, rvec, tvec = estimate_pose(tag, camera_matrix, distortion_coeffs, args.tag_size)
             if success:
+                object_points = create_object_points(args.tag_size)
+                projected_points, reprojection_rmse_px = compute_reprojection(
+                    object_points, image_points, camera_matrix, distortion_coeffs, rvec, tvec
+                )
                 draw_pose_axes(frame, camera_matrix, distortion_coeffs, rvec, tvec, args.tag_size)
+                draw_reprojection(frame, image_points, projected_points)
                 distance_m = float(np.linalg.norm(tvec))
-                print(f"id={tag.id} tvec={tvec.ravel()} rvec={rvec.ravel()} distance_m={distance_m:.3f}")
-                pose_text = f"ID:{tag.id} Z:{tvec[2][0]:.2f}m D:{distance_m:.2f}m"
+                print(
+                    f"id={tag.id} tvec={tvec.ravel()} rvec={rvec.ravel()} "
+                    f"distance_m={distance_m:.3f} reprojection_rmse_px={reprojection_rmse_px:.2f}"
+                )
+                pose_text = f"ID:{tag.id} Z:{tvec[2][0]:.2f}m D:{distance_m:.2f}m E:{reprojection_rmse_px:.2f}px"
             else:
                 pose_text = f"ID:{tag.id}"
 

@@ -8,13 +8,25 @@ import depthai as dai
 import numpy as np
 
 
-CAMERA_SOCKET = dai.CameraBoardSocket.CAM_B
 TARGET_FPS = 30.0
+DEFAULT_CAMERA = "CAM_B"
+CAMERA_SOCKETS = {
+    "CAM_A": dai.CameraBoardSocket.CAM_A,
+    "CAM_B": dai.CameraBoardSocket.CAM_B,
+    "CAM_C": dai.CameraBoardSocket.CAM_C,
+}
 DEFAULT_DICT = "DICT_4X4_50"
 
 
 def build_argparser():
     parser = argparse.ArgumentParser(description="Detect ArUco markers with DepthAI v3 and estimate pose on the host.")
+    parser.add_argument(
+        "--camera",
+        type=str,
+        default=DEFAULT_CAMERA,
+        choices=sorted(CAMERA_SOCKETS.keys()),
+        help=f"Camera socket to use. Default: {DEFAULT_CAMERA}",
+    )
     parser.add_argument(
         "--marker-size",
         type=float,
@@ -77,6 +89,20 @@ def draw_pose_axes(frame, camera_matrix, distortion_coeffs, rvec, tvec, marker_s
     cv2.line(frame, tuple(origin), tuple(z_axis), (255, 0, 0), 2, cv2.LINE_AA)
 
 
+def compute_reprojection(object_points, image_points, camera_matrix, distortion_coeffs, rvec, tvec):
+    projected_points, _ = cv2.projectPoints(object_points, rvec, tvec, camera_matrix, distortion_coeffs)
+    projected_points = projected_points.reshape(-1, 2)
+    per_corner_error = np.linalg.norm(image_points - projected_points, axis=1)
+    rmse_px = float(np.sqrt(np.mean(per_corner_error ** 2)))
+    return projected_points, rmse_px
+
+
+def draw_reprojection(frame, image_points, projected_points):
+    for observed, projected in zip(image_points.astype(int), projected_points.astype(int)):
+        cv2.circle(frame, tuple(projected), 4, (255, 0, 255), -1, cv2.LINE_AA)
+        cv2.line(frame, tuple(observed), tuple(projected), (0, 255, 255), 1, cv2.LINE_AA)
+
+
 def get_aruco_dictionary(dictionary_name: str):
     if not hasattr(cv2, "aruco"):
         raise RuntimeError("This OpenCV build does not include cv2.aruco. Install opencv-contrib-python in your environment.")
@@ -98,6 +124,7 @@ def get_supported_dictionaries():
 
 
 args = build_argparser().parse_args()
+camera_socket = CAMERA_SOCKETS[args.camera]
 print(f"OpenCV version: {cv2.__version__}")
 supported_dictionaries = get_supported_dictionaries()
 print(f"Supported dictionaries ({len(supported_dictionaries)}): {', '.join(supported_dictionaries)}")
@@ -107,17 +134,17 @@ aruco_detector = create_detector(aruco_dictionary)
 with dai.Pipeline() as pipeline:
     device = pipeline.getDefaultDevice()
     calibration = device.readCalibration()
-    camera_features = get_camera_features(device, CAMERA_SOCKET)
+    camera_features = get_camera_features(device, camera_socket)
     selected_config = select_highest_resolution_config(camera_features, TARGET_FPS)
     output_size = (selected_config.width, selected_config.height)
     output_fps = min(TARGET_FPS, selected_config.maxFps)
 
     print(
-        f"Using {CAMERA_SOCKET} sensor={camera_features.sensorName} "
+        f"Using {args.camera} sensor={camera_features.sensorName} "
         f"resolution={output_size[0]}x{output_size[1]} fps={output_fps:g}"
     )
 
-    host_camera = pipeline.create(dai.node.Camera).build(CAMERA_SOCKET, output_size, output_fps)
+    host_camera = pipeline.create(dai.node.Camera).build(camera_socket, output_size, output_fps)
     output_queue = host_camera.requestOutput(output_size, dai.ImgFrame.Type.GRAY8, fps=output_fps).createOutputQueue()
 
     color = (0, 255, 0)
@@ -167,10 +194,17 @@ with dai.Pipeline() as pipeline:
 
                 center = tuple(np.mean(image_points, axis=0).astype(int))
                 if success:
+                    projected_points, reprojection_rmse_px = compute_reprojection(
+                        object_points, image_points, camera_matrix, distortion_coeffs, rvec, tvec
+                    )
                     draw_pose_axes(display, camera_matrix, distortion_coeffs, rvec, tvec, args.marker_size)
+                    draw_reprojection(display, image_points, projected_points)
                     distance_m = float(np.linalg.norm(tvec))
-                    print(f"id={int(marker_id)} tvec={tvec.ravel()} rvec={rvec.ravel()} distance_m={distance_m:.3f}")
-                    pose_text = f"ID:{int(marker_id)} Z:{tvec[2][0]:.2f}m D:{distance_m:.2f}m"
+                    print(
+                        f"id={int(marker_id)} tvec={tvec.ravel()} rvec={rvec.ravel()} "
+                        f"distance_m={distance_m:.3f} reprojection_rmse_px={reprojection_rmse_px:.2f}"
+                    )
+                    pose_text = f"ID:{int(marker_id)} Z:{tvec[2][0]:.2f}m D:{distance_m:.2f}m E:{reprojection_rmse_px:.2f}px"
                 else:
                     pose_text = f"ID:{int(marker_id)}"
 
